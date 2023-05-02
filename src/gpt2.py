@@ -30,10 +30,11 @@ class GPT2(nn.Module):
 
     def block(self, inputs, which, path, i):
         print(path)
+        hidden_states = None
         if i == 0:
-            return self.embed_input(inputs, which, path + [f"block{i}"])
-        
-        hidden_states = self.block(inputs, which, path + [f"block{i}"], i - 1)
+            hidden_states = self.embed_input(inputs, which, path + [f"block{i}"])
+        else:
+            hidden_states = self.block(inputs, which, path + [f"block{i}"], i - 1)
         head_mask = self.model.get_head_mask(None, self.config.n_layer)
 
         cur_block = self.model.h[i]
@@ -69,6 +70,8 @@ def create_gpt2():
 
     # model_graph = draw_graph(model, input_data=inputs, save_graph=True, filename="graph.png")
     model = GPT2(config, gpt)
-    model.forward(inputs, lambda x: 1)
+    res = model(inputs, lambda x: 1)
+    res2 = gpt(inputs[1].input_ids).last_hidden_state
+    assert (res == res2).all()
 
 create_gpt2()
