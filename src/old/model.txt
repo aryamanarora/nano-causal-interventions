@@ -1,0 +1,93 @@
+GPTNeoXForCausalLM(
+  (gpt_neox): GPTNeoXModel(
+    (embed_in): Embedding(50304, 512)
+    (layers): ModuleList(
+      (0): GPTNeoXLayer(
+        (input_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (post_attention_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (attention): GPTNeoXAttention(
+          (rotary_emb): RotaryEmbedding()
+          (query_key_value): Linear(in_features=512, out_features=1536, bias=True)
+          (dense): Linear(in_features=512, out_features=512, bias=True)
+        )
+        (mlp): GPTNeoXMLP(
+          (dense_h_to_4h): Linear(in_features=512, out_features=2048, bias=True)
+          (dense_4h_to_h): Linear(in_features=2048, out_features=512, bias=True)
+          (act): GELUActivation()
+        )
+      )
+      (1): GPTNeoXLayer(
+        (input_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (post_attention_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (attention): GPTNeoXAttention(
+          (rotary_emb): RotaryEmbedding()
+          (query_key_value): Linear(in_features=512, out_features=1536, bias=True)
+          (dense): Linear(in_features=512, out_features=512, bias=True)
+        )
+        (mlp): GPTNeoXMLP(
+          (dense_h_to_4h): Linear(in_features=512, out_features=2048, bias=True)
+          (dense_4h_to_h): Linear(in_features=2048, out_features=512, bias=True)
+          (act): GELUActivation()
+        )
+      )
+      (2): GPTNeoXLayer(
+        (input_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (post_attention_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (attention): GPTNeoXAttention(
+          (rotary_emb): RotaryEmbedding()
+          (query_key_value): Linear(in_features=512, out_features=1536, bias=True)
+          (dense): Linear(in_features=512, out_features=512, bias=True)
+        )
+        (mlp): GPTNeoXMLP(
+          (dense_h_to_4h): Linear(in_features=512, out_features=2048, bias=True)
+          (dense_4h_to_h): Linear(in_features=2048, out_features=512, bias=True)
+          (act): GELUActivation()
+        )
+      )
+      (3): GPTNeoXLayer(
+        (input_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (post_attention_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (attention): GPTNeoXAttention(
+          (rotary_emb): RotaryEmbedding()
+          (query_key_value): Linear(in_features=512, out_features=1536, bias=True)
+          (dense): Linear(in_features=512, out_features=512, bias=True)
+        )
+        (mlp): GPTNeoXMLP(
+          (dense_h_to_4h): Linear(in_features=512, out_features=2048, bias=True)
+          (dense_4h_to_h): Linear(in_features=2048, out_features=512, bias=True)
+          (act): GELUActivation()
+        )
+      )
+      (4): GPTNeoXLayer(
+        (input_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (post_attention_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (attention): GPTNeoXAttention(
+          (rotary_emb): RotaryEmbedding()
+          (query_key_value): Linear(in_features=512, out_features=1536, bias=True)
+          (dense): Linear(in_features=512, out_features=512, bias=True)
+        )
+        (mlp): GPTNeoXMLP(
+          (dense_h_to_4h): Linear(in_features=512, out_features=2048, bias=True)
+          (dense_4h_to_h): Linear(in_features=2048, out_features=512, bias=True)
+          (act): GELUActivation()
+        )
+      )
+      (5): GPTNeoXLayer(
+        (input_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (post_attention_layernorm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+        (attention): GPTNeoXAttention(
+          (rotary_emb): RotaryEmbedding()
+          (query_key_value): Linear(in_features=512, out_features=1536, bias=True)
+          (dense): Linear(in_features=512, out_features=512, bias=True)
+        )
+        (mlp): GPTNeoXMLP(
+          (dense_h_to_4h): Linear(in_features=512, out_features=2048, bias=True)
+          (dense_4h_to_h): Linear(in_features=2048, out_features=512, bias=True)
+          (act): GELUActivation()
+        )
+      )
+    )
+    (final_layer_norm): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+  )
+  (embed_out): Linear(in_features=512, out_features=50304, bias=False)
+)
