@@ -85,6 +85,7 @@ class GPT2(nn.Module):
         head_mask = self.model.get_head_mask(None, self.config.n_layer)[i]
         num_heads, head_dim = cur_block.attn.num_heads, cur_block.attn.head_dim
 
+        # compute inputs (cache as much as possible!)
         results = []
         child_path = []
         if results_given is not None:
@@ -93,7 +94,7 @@ class GPT2(nn.Module):
         else:
             if self.branch(path):
                 for head in range(num_heads):
-                    results.append(input_func(path + [name + str(head)], i))
+                    results.append(input_func(path + [name + str(head)]))
                     child_path.extend(results[-1].path)
                 child_path += [name]
             else:
@@ -107,18 +108,43 @@ class GPT2(nn.Module):
             return self.cache[tup]
 
         # ln + attn
-        hidden_states = cur_block.ln_1(results[0].hidden_states)
+        # qkv: shape of (batch_size, num_heads, seq_len, head_dim)
+        q, k, v = [], [], []
+        if self.branch(path) and results_given is None:
+            for head in range(num_heads):
+                hidden_states = cur_block.ln_1(results[head].hidden_states)
 
-        query, key, value = cur_block.attn.c_attn(hidden_states).split(cur_block.attn.split_size, dim=2)
-        query = cur_block.attn._split_heads(query, num_heads, head_dim)
-        key = cur_block.attn._split_heads(key, num_heads, head_dim)
-        value = cur_block.attn._split_heads(value, num_heads, head_dim)
+                query, key, value = cur_block.attn.c_attn(hidden_states).split(cur_block.attn.split_size, dim=2)
+                query = cur_block.attn._split_heads(query, num_heads, head_dim)
+                key = cur_block.attn._split_heads(key, num_heads, head_dim)
+                value = cur_block.attn._split_heads(value, num_heads, head_dim)
 
-        attn_output, attn_weights = cur_block.attn._attn(query, key, value, None, head_mask)
+                if head == 0:
+                    q = torch.zeros_like(query)
+                    k = torch.zeros_like(key)
+                    v = torch.zeros_like(value)
+
+                q[:, head, :, :] = query[:, head, :, :]
+                k[:, head, :, :] = key[:, head, :, :]
+                v[:, head, :, :] = value[:, head, :, :]
+        else:
+            hidden_states = cur_block.ln_1(results[0].hidden_states)
+
+            query, key, value = cur_block.attn.c_attn(hidden_states).split(cur_block.attn.split_size, dim=2)
+            query = cur_block.attn._split_heads(query, num_heads, head_dim)
+            key = cur_block.attn._split_heads(key, num_heads, head_dim)
+            value = cur_block.attn._split_heads(value, num_heads, head_dim)
+            q, k, v = query, key, value
+
+        # attn probs and outputs
+        attn_output, attn_weights = cur_block.attn._attn(q, k, v, None, head_mask)
         attn_output = cur_block.attn._merge_heads(attn_output, num_heads, head_dim)
         attn_output = cur_block.attn.c_proj(attn_output)
 
+        # dropout
         attn_output = cur_block.attn.resid_dropout(attn_output)
+
+        # result
         result = ReturnValue(attn_output, child_path, attn_weights)
         self.cache[tup] = result
         return result
@@ -229,18 +255,19 @@ def create_gpt2():
 
     # all paths via attn0 and then attn1 get the 0 input
     def which(path):
-        if 'a5' in path and 'a4' in path: return 0
+        if 'a4.head0' in path: return 0
         return 1
     
     def branch(path):
-        if path[-1] == 'a5': return True
-        if 'a5' in path and path[-1] == 'a4': return True
+        if path[-1] == 'a4': return True
+        if path[-1] == 'a4.head': return True
         return False
 
     # time model call
-    t = timeit.timeit(lambda: print(model(inputs, which, branch).hidden_states), number=1)
+    def run():
+        res = model(inputs, which, branch).hidden_states
+        print(res - true)
+    t = timeit.timeit(run, number=1)
     print(f"Time: {t:.5f} s")
-    # res4 = model(inputs, which, branch)
-    # print(res4.hidden_states)
 
 create_gpt2()
