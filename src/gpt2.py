@@ -20,14 +20,17 @@ class GPT2(nn.Module):
         self.model = model
         self.verbose = verbose
         self.cache = {}
+
+        self.which = None
+        self.branch = None
     
-    def embed_input(self, inputs, which, branch, path) -> ReturnValue:
+    def embed_input(self, inputs, path) -> ReturnValue:
         name = "embed_input"
         path.append(name)
         if self.verbose: print(' '.join(path))
 
         # the meat of path patching: picking which input to use!
-        input_choice = which(path)
+        input_choice = self.which(path)
         child_path = [(name, input_choice)]
         tup = tuple(child_path)
         if tup in self.cache:
@@ -56,22 +59,22 @@ class GPT2(nn.Module):
         path.pop()
         return result
     
-    def block_attn(self, inputs, which, branch, path, i) -> ReturnValue:
+    def block_attn(self, inputs, path, i) -> ReturnValue:
         name = f"attn{i}"
         path.append(name)
         if self.verbose: print(' '.join(path))
 
         result1, result2 = None, None
-        if not branch(path):
-            if i == 0: result1 = self.embed_input(inputs, which, branch, path)
-            else: result1 = self.block_ffn(inputs, which, branch, path, i - 1)
+        if not self.branch(path):
+            if i == 0: result1 = self.embed_input(inputs, path)
+            else: result1 = self.block_ffn(inputs, path, i - 1)
             result2 = result1
         elif i == 0:
-            result1 = self.embed_input(inputs, which, branch, path[:-1])
-            result2 = self.embed_input(inputs, which, branch, path)
+            result1 = self.embed_input(inputs, path[:-1])
+            result2 = self.embed_input(inputs, path)
         else:
-            result1 = self.block_ffn(inputs, which, branch, path[:-1], i - 1)
-            result2 = self.block_ffn(inputs, which, branch, path, i - 1)
+            result1 = self.block_ffn(inputs, path[:-1], i - 1)
+            result2 = self.block_ffn(inputs, path, i - 1)
         
         # cache
         child_path = combine_paths(result1.path, result2.path) + [name]
@@ -106,18 +109,18 @@ class GPT2(nn.Module):
         path.pop()
         return result
 
-    def block_ffn(self, inputs, which, branch, path, i) -> ReturnValue:
+    def block_ffn(self, inputs, path, i) -> ReturnValue:
         name = f"ffn{i}"
         path.append(name)
         if self.verbose: print(' '.join(path))
 
         result1, result2 = None, None
-        if not branch(path):
-            result1 = self.block_attn(inputs, which, branch, path, i)
+        if not self.branch(path):
+            result1 = self.block_attn(inputs, path, i)
             result2 = result1
         else:
-            result1 = self.block_attn(inputs, which, branch, path[:-1], i)
-            result2 = self.block_attn(inputs, which, branch, path, i)
+            result1 = self.block_attn(inputs, path[:-1], i)
+            result2 = self.block_attn(inputs, path, i)
 
         # cache
         child_path = combine_paths(result1.path, result2.path) + [name]
@@ -142,13 +145,13 @@ class GPT2(nn.Module):
         path.pop()
         return result
 
-    def final_ln(self, inputs, which, branch, path) -> ReturnValue:
+    def final_ln(self, inputs, path) -> ReturnValue:
         name = "final_ln"
         path.append(name)
         if self.verbose: print(' '.join(path))
 
         # just the final layer norm after all blocks
-        result = self.block_ffn(inputs, which, branch, path, self.config.n_layer - 1)
+        result = self.block_ffn(inputs, path, self.config.n_layer - 1)
         hidden_states = self.model.ln_f(result.hidden_states)
 
         result = ReturnValue(hidden_states, result.path + [name], result.outputs)
@@ -156,7 +159,9 @@ class GPT2(nn.Module):
         return result
     
     def forward(self, inputs, which, branch) -> ReturnValue:
-        result = self.final_ln(inputs, which, branch, [])
+        self.which = which
+        self.branch = branch
+        result = self.final_ln(inputs, [])
         self.cache = {}
         return result
 
