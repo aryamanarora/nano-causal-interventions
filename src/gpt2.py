@@ -3,6 +3,16 @@ import torch
 import torch.nn as nn
 from torchview import draw_graph
 
+def combine_paths(path1: list, path2: list) -> list:
+    if path1 == path2: return path1
+    return path1 + path2
+
+class ReturnValue():
+    def __init__(self, hidden_states, path, outputs=None):
+        self.hidden_states = hidden_states
+        self.path = path[::]
+        self.outputs = outputs
+
 class GPT2(nn.Module):
     def __init__(self, config, model: GPT2Model, verbose: bool = False):
         super().__init__()
@@ -11,12 +21,18 @@ class GPT2(nn.Module):
         self.verbose = verbose
         self.cache = {}
     
-    def embed_input(self, inputs, which, path):
-        path.append("embed_input")
-        if self.verbose: print(path)
+    def embed_input(self, inputs, which, branch, path) -> ReturnValue:
+        name = "embed_input"
+        path.append(name)
+        if self.verbose: print(' '.join(path))
 
         # the meat of path patching: picking which input to use!
         input_choice = which(path)
+        child_path = [(name, input_choice)]
+        tup = tuple(child_path)
+        if tup in self.cache:
+            if self.verbose: print("    using cache")
+            return self.cache[tup]
         input_ids = inputs[input_choice].input_ids
 
         # metadata about inputs
@@ -35,33 +51,42 @@ class GPT2(nn.Module):
 
         # apply dropout
         hidden_states = self.model.drop(hidden_states)
+        result = ReturnValue(hidden_states, child_path)
+        self.cache[tup] = result
         path.pop()
-        return hidden_states
+        return result
     
-    def block_attn(self, inputs, which, path, i):
-        path.append(f"attn{i}")
-        if self.verbose: print(path)
+    def block_attn(self, inputs, which, branch, path, i) -> ReturnValue:
+        name = f"attn{i}"
+        path.append(name)
+        if self.verbose: print(' '.join(path))
 
-        hidden_states1, outputs1 = None, None
-        hidden_states2, outputs2 = None, None
-        if which(path[:-1]) == which(path):
-            if i == 0: hidden_states1 = self.embed_input(inputs, which, path)
-            else: hidden_states1, outputs1 = self.block_ffn(inputs, which, path, i - 1)
-            hidden_states2, outputs2 = hidden_states1, outputs1
+        result1, result2 = None, None
+        if not branch(path):
+            if i == 0: result1 = self.embed_input(inputs, which, branch, path)
+            else: result1 = self.block_ffn(inputs, which, branch, path, i - 1)
+            result2 = result1
         elif i == 0:
-            hidden_states1 = self.embed_input(inputs, which, path[:-1])
-            hidden_states2 = self.embed_input(inputs, which, path)
+            result1 = self.embed_input(inputs, which, branch, path[:-1])
+            result2 = self.embed_input(inputs, which, branch, path)
         else:
-            hidden_states1, outputs1 = self.block_ffn(inputs, which, path[:-1], i - 1)
-            hidden_states2, outputs2 = self.block_ffn(inputs, which, path, i - 1)
+            result1 = self.block_ffn(inputs, which, branch, path[:-1], i - 1)
+            result2 = self.block_ffn(inputs, which, branch, path, i - 1)
+        
+        # cache
+        child_path = combine_paths(result1.path, result2.path) + [name]
+        tup = tuple(child_path)
+        if tup in self.cache:
+            if self.verbose: print("    using cache")
+            return self.cache[tup]
 
         # get attn params
         cur_block = self.model.h[i]
         head_mask = self.model.get_head_mask(None, self.config.n_layer)[i]
 
         # ln + attn
-        residual = hidden_states1
-        hidden_states = cur_block.ln_1(hidden_states2)
+        residual = result1.hidden_states
+        hidden_states = cur_block.ln_1(result2.hidden_states)
         attn_outputs = cur_block.attn(
             hidden_states,
             layer_past=None,
@@ -76,51 +101,64 @@ class GPT2(nn.Module):
 
         # residual connection
         hidden_states = attn_output + residual
+        result = ReturnValue(hidden_states, child_path, outputs)
+        self.cache[tup] = result
         path.pop()
-        return hidden_states, outputs
+        return result
 
-    def block_ffn(self, inputs, which, path, i):
-        path.append(f"ffn{i}")
-        if self.verbose: print(path)
+    def block_ffn(self, inputs, which, branch, path, i) -> ReturnValue:
+        name = f"ffn{i}"
+        path.append(name)
+        if self.verbose: print(' '.join(path))
 
-        hidden_states1, outputs1 = None, None
-        hidden_states2, outputs2 = None, None
-        if which(path[:-1]) == which(path):
-            hidden_states1, outputs1 = self.block_attn(inputs, which, path, i)
-            hidden_states2, outputs2 = hidden_states1, outputs1
+        result1, result2 = None, None
+        if not branch(path):
+            result1 = self.block_attn(inputs, which, branch, path, i)
+            result2 = result1
         else:
-            hidden_states1, outputs1 = self.block_attn(inputs, which, path[:-1], i)
-            hidden_states2, outputs2 = self.block_attn(inputs, which, path, i)
+            result1 = self.block_attn(inputs, which, branch, path[:-1], i)
+            result2 = self.block_attn(inputs, which, branch, path, i)
+
+        # cache
+        child_path = combine_paths(result1.path, result2.path) + [name]
+        tup = tuple(child_path)
+        if tup in self.cache:
+            if self.verbose: print("    using cache")
+            return self.cache[tup]
 
         # get ffn params
         cur_block = self.model.h[i]
 
         # ln + attn
-        residual = hidden_states1
-        hidden_states = cur_block.ln_2(hidden_states2)
+        residual = result1.hidden_states
+        hidden_states = cur_block.ln_2(result2.hidden_states)
         feed_forward_hidden_states = cur_block.mlp(hidden_states)
 
         # residual connection
         hidden_states = residual + feed_forward_hidden_states
-        outputs = (hidden_states,) + outputs1[1:]
+        outputs = (hidden_states,) + result2.outputs
+        result = ReturnValue(hidden_states, child_path, outputs)
+        self.cache[tup] = result
         path.pop()
-        return hidden_states, outputs
+        return result
 
-    def final_ln(self, inputs, which, path):
-        path.append("final_ln")
-        if self.verbose: print(path)
+    def final_ln(self, inputs, which, branch, path) -> ReturnValue:
+        name = "final_ln"
+        path.append(name)
+        if self.verbose: print(' '.join(path))
 
         # just the final layer norm after all blocks
-        hidden_states, output = self.block_ffn(inputs, which, path, self.config.n_layer - 1)
-        hidden_states = self.model.ln_f(hidden_states)
+        result = self.block_ffn(inputs, which, branch, path, self.config.n_layer - 1)
+        hidden_states = self.model.ln_f(result.hidden_states)
 
+        result = ReturnValue(hidden_states, result.path + [name], result.outputs)
         path.pop()
-        return hidden_states
+        return result
     
-    def forward(self, inputs, which):
-        hidden_states = self.final_ln(inputs, which, [])
+    def forward(self, inputs, which, branch) -> ReturnValue:
+        result = self.final_ln(inputs, which, branch, [])
         self.cache = {}
-        return hidden_states
+        return result
 
 def create_gpt2():
     config = GPT2Config.from_pretrained("gpt2")
@@ -129,15 +167,26 @@ def create_gpt2():
     inputs = [tokenizer("Hello sus man", return_tensors="pt"), tokenizer("Hi sus man", return_tensors="pt")]
 
     # model_graph = draw_graph(model, input_data=inputs, save_graph=True, filename="graph.png")
-    model = GPT2(config, gpt, True)
-    res = model(inputs, lambda x: 1)
-    res2 = gpt(inputs[1].input_ids).last_hidden_state
-    res3 = model(inputs, lambda x: 1 if 'attn0' in x else 0)
+    model = GPT2(config, gpt, verbose=False)
+    true = gpt(inputs[1].input_ids).last_hidden_state
+    res = model(inputs, lambda x: 1, lambda x: False).hidden_states
+    assert (res == true).all()
+    print("sanity check passed")
 
-    # check equality
-    print(res - res2)
-    print(res - res3)
-    assert (res == res2).all()
-    assert not (res == res3).all()
+    # all paths via attn0 get the 0 input
+    # res3 = model(inputs, lambda x: 0 if 'attn0' in x else 1, lambda x: x[-1] == 'attn0')
+
+    # all paths via attn0 and then attn1 get the 0 input
+    def which(path):
+        if 'attn5' in path and 'attn4' in path: return 0
+        return 1
+    
+    def branch(path):
+        if path[-1] == 'attn5': return True
+        if 'attn5' in path and path[-1] == 'attn4': return True
+        return False
+
+    res4 = model(inputs, which, branch)
+    print(res4.hidden_states)
 
 create_gpt2()
