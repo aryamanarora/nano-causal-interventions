@@ -9,13 +9,15 @@ class GPT2(nn.Module):
         self.config = config
         self.model = model
         self.verbose = verbose
+        self.cache = {}
     
     def embed_input(self, inputs, which, path):
         path.append("embed_input")
         if self.verbose: print(path)
 
         # the meat of path patching: picking which input to use!
-        input_ids = inputs[which(path)].input_ids
+        input_choice = which(path)
+        input_ids = inputs[input_choice].input_ids
 
         # metadata about inputs
         input_shape = input_ids.size()
@@ -39,19 +41,27 @@ class GPT2(nn.Module):
     def block_attn(self, inputs, which, path, i):
         path.append(f"attn{i}")
         if self.verbose: print(path)
-        hidden_states, outputs = None, None
-        if i == 0:
-            hidden_states = self.embed_input(inputs, which, path)
+
+        hidden_states1, outputs1 = None, None
+        hidden_states2, outputs2 = None, None
+        if which(path[:-1]) == which(path):
+            if i == 0: hidden_states1 = self.embed_input(inputs, which, path)
+            else: hidden_states1, outputs1 = self.block_ffn(inputs, which, path, i - 1)
+            hidden_states2, outputs2 = hidden_states1, outputs1
+        elif i == 0:
+            hidden_states1 = self.embed_input(inputs, which, path[:-1])
+            hidden_states2 = self.embed_input(inputs, which, path)
         else:
-            hidden_states, outputs = self.block_ffn(inputs, which, path, i - 1)
+            hidden_states1, outputs1 = self.block_ffn(inputs, which, path[:-1], i - 1)
+            hidden_states2, outputs2 = self.block_ffn(inputs, which, path, i - 1)
 
         # get attn params
         cur_block = self.model.h[i]
         head_mask = self.model.get_head_mask(None, self.config.n_layer)[i]
 
         # ln + attn
-        residual = hidden_states
-        hidden_states = cur_block.ln_1(hidden_states)
+        residual = hidden_states1
+        hidden_states = cur_block.ln_1(hidden_states2)
         attn_outputs = cur_block.attn(
             hidden_states,
             layer_past=None,
@@ -72,19 +82,27 @@ class GPT2(nn.Module):
     def block_ffn(self, inputs, which, path, i):
         path.append(f"ffn{i}")
         if self.verbose: print(path)
-        hidden_states, outputs = self.block_attn(inputs, which, path, i)
+
+        hidden_states1, outputs1 = None, None
+        hidden_states2, outputs2 = None, None
+        if which(path[:-1]) == which(path):
+            hidden_states1, outputs1 = self.block_attn(inputs, which, path, i)
+            hidden_states2, outputs2 = hidden_states1, outputs1
+        else:
+            hidden_states1, outputs1 = self.block_attn(inputs, which, path[:-1], i)
+            hidden_states2, outputs2 = self.block_attn(inputs, which, path, i)
 
         # get ffn params
         cur_block = self.model.h[i]
 
         # ln + attn
-        residual = hidden_states
-        hidden_states = cur_block.ln_2(hidden_states)
+        residual = hidden_states1
+        hidden_states = cur_block.ln_2(hidden_states2)
         feed_forward_hidden_states = cur_block.mlp(hidden_states)
 
         # residual connection
         hidden_states = residual + feed_forward_hidden_states
-        outputs = (hidden_states,) + outputs[1:]
+        outputs = (hidden_states,) + outputs1[1:]
         path.pop()
         return hidden_states, outputs
 
@@ -101,6 +119,7 @@ class GPT2(nn.Module):
     
     def forward(self, inputs, which):
         hidden_states = self.final_ln(inputs, which, [])
+        self.cache = {}
         return hidden_states
 
 def create_gpt2():
@@ -113,9 +132,12 @@ def create_gpt2():
     model = GPT2(config, gpt, True)
     res = model(inputs, lambda x: 1)
     res2 = gpt(inputs[1].input_ids).last_hidden_state
+    res3 = model(inputs, lambda x: 1 if 'attn0' in x else 0)
 
     # check equality
     print(res - res2)
+    print(res - res3)
     assert (res == res2).all()
+    assert not (res == res3).all()
 
 create_gpt2()
