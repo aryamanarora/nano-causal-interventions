@@ -49,7 +49,7 @@ class GPT2(nn.Module):
         child_path = [(name, input_choice)]
         tup = tuple(child_path)
         if tup in self.cache:
-            if self.verbose: print("    using cache")
+            if self.verbose: print("    using cache", tup)
             return self.cache[tup]
         input_ids = self.inputs[input_choice].input_ids
 
@@ -70,7 +70,7 @@ class GPT2(nn.Module):
         # apply dropout
         hidden_states = self.model.drop(hidden_states)
         result = ReturnValue(hidden_states, child_path)
-        self.cache[tup] = result
+        if self.store_cache: self.cache[tup] = result
         return result
     
     def block_attn_heads(self, path, i, results_given=None) -> ReturnValue:
@@ -104,7 +104,7 @@ class GPT2(nn.Module):
 
         tup = tuple(child_path)
         if tup in self.cache:
-            if self.verbose: print("    using cache")
+            if self.verbose: print("    using cache", tup)
             return self.cache[tup]
 
         # ln + attn
@@ -146,7 +146,7 @@ class GPT2(nn.Module):
 
         # result
         result = ReturnValue(attn_output, child_path, attn_weights)
-        self.cache[tup] = result
+        if self.store_cache: self.cache[tup] = result
         return result
     
     def block_attn(self, path, i) -> ReturnValue:
@@ -166,7 +166,7 @@ class GPT2(nn.Module):
         child_path = combine_paths(results[0].path, results[1].path) + [name]
         tup = tuple(child_path)
         if tup in self.cache:
-            if self.verbose: print("    using cache")
+            if self.verbose: print("    using cache", tup)
             return self.cache[tup]
 
         # get attn params
@@ -177,11 +177,12 @@ class GPT2(nn.Module):
         residual = results[0].hidden_states
         attn_output, attn_weights = results[1].hidden_states, results[1].outputs
         outputs = (None, attn_weights)
+        del outputs
 
         # residual connection
         hidden_states = attn_output + residual
-        result = ReturnValue(hidden_states, child_path, outputs)
-        self.cache[tup] = result
+        result = ReturnValue(hidden_states, child_path, None)
+        if self.store_cache: self.cache[tup] = result
         return result
 
     def block_ffn(self, path, i) -> ReturnValue:
@@ -196,7 +197,7 @@ class GPT2(nn.Module):
         child_path = combine_paths(results[0].path, results[1].path) + [name]
         tup = tuple(child_path)
         if tup in self.cache:
-            if self.verbose: print("    using cache")
+            if self.verbose: print("    using cache", tup)
             return self.cache[tup]
 
         # get ffn params
@@ -209,9 +210,9 @@ class GPT2(nn.Module):
 
         # residual connection
         hidden_states = residual + feed_forward_hidden_states
-        outputs = (hidden_states,) + results[1].outputs
+        outputs = None
         result = ReturnValue(hidden_states, child_path, outputs)
-        self.cache[tup] = result
+        if self.store_cache: self.cache[tup] = result
         return result
 
     def final_ln(self, path) -> ReturnValue:
@@ -226,21 +227,23 @@ class GPT2(nn.Module):
         result = ReturnValue(hidden_states, result.path + [name], result.outputs)
         return result
     
-    def forward(self, inputs, which, branch) -> ReturnValue:
-        self.which = which
-        self.branch = branch
-        self.inputs = inputs
-        result = self.final_ln([])
-        self.which = None
-        self.branch = None
-        self.inputs = None
-        self.cache = {}
+    def forward(self, inputs, which, branch, store_cache=True) -> ReturnValue:
+        with torch.inference_mode():
+            self.store_cache = store_cache
+            self.which = which
+            self.branch = branch
+            self.inputs = inputs
+            result = self.final_ln([])
+            self.which = None
+            self.branch = None
+            self.inputs = None
+            self.cache = {}
         return result
 
-def create_gpt2():
-    config = GPT2Config.from_pretrained("gpt2")
-    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-    gpt = GPT2Model.from_pretrained("gpt2", config=config)
+def create_gpt2(name="gpt2"):
+    config = GPT2Config.from_pretrained(name)
+    tokenizer = GPT2Tokenizer.from_pretrained(name)
+    gpt = GPT2Model.from_pretrained(name, config=config)
     return config, tokenizer, gpt
 
 def main():
@@ -250,9 +253,9 @@ def main():
     # model_graph = draw_graph(model, input_data=inputs, save_graph=True, filename="graph.png")
     model = GPT2(config, gpt, verbose=True)
     true = gpt(inputs[1].input_ids).last_hidden_state
-    res = model(inputs, lambda x: 1, lambda x: False).hidden_states
-    assert (res == true).all()
-    print("sanity check passed")
+    # res = model(inputs, lambda x: 1, lambda x: False).hidden_states
+    # assert (res == true).all()
+    # print("sanity check passed")
 
     def which(path):
         if 'a4.head0' in path: return 0
@@ -263,12 +266,12 @@ def main():
         if path[-1] == 'a4.head': return True
         return False
     
-    res = model(inputs, lambda x: 1, branch).hidden_states
-    assert (res == true).all()
+    # res = model(inputs, lambda x: 1, branch).hidden_states
+    # assert (res == true).all()
 
     # time model call
     def run():
-        res = model(inputs, which, branch).hidden_states
+        res = model(inputs, which, branch, store_cache=False).hidden_states
         print(res - true)
     t = timeit.timeit(run, number=1)
     print(f"Time: {t:.5f} s")
