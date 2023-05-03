@@ -241,6 +241,10 @@ def create_gpt2():
     config = GPT2Config.from_pretrained("gpt2")
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     gpt = GPT2Model.from_pretrained("gpt2", config=config)
+    return config, tokenizer, gpt
+
+def main():
+    config, tokenizer, gpt = create_gpt2()
     inputs = [tokenizer("Hello sus man", return_tensors="pt"), tokenizer("Hi sus man", return_tensors="pt")]
 
     # model_graph = draw_graph(model, input_data=inputs, save_graph=True, filename="graph.png")
@@ -250,10 +254,6 @@ def create_gpt2():
     assert (res == true).all()
     print("sanity check passed")
 
-    # all paths via attn0 get the 0 input
-    # res3 = model(inputs, lambda x: 0 if 'attn0' in x else 1, lambda x: x[-1] == 'attn0')
-
-    # all paths via attn0 and then attn1 get the 0 input
     def which(path):
         if 'a4.head0' in path: return 0
         return 1
@@ -262,6 +262,9 @@ def create_gpt2():
         if path[-1] == 'a4': return True
         if path[-1] == 'a4.head': return True
         return False
+    
+    res = model(inputs, lambda x: 1, branch).hidden_states
+    assert (res == true).all()
 
     # time model call
     def run():
@@ -270,4 +273,5 @@ def create_gpt2():
     t = timeit.timeit(run, number=1)
     print(f"Time: {t:.5f} s")
 
-create_gpt2()
+if __name__ == "__main__":
+    main()
