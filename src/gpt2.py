@@ -262,23 +262,27 @@ class GPT2(nn.Module):
             self.inputs = None
         return result, self.cache
 
-def create_gpt2(name="gpt2-medium", revision="main"):
+def create_gpt2(name="gpt2", revision="main"):
     config = GPT2Config.from_pretrained(name, revision=revision)
     tokenizer = GPT2Tokenizer.from_pretrained(name, revision=revision)
     gpt = GPT2Model.from_pretrained(name, config=config)
+    print("loaded model")
     return config, tokenizer, gpt
 
-def main():
+def sanity_check():
     config, tokenizer, gpt = create_gpt2()
-    print("loaded model")
     inputs = [tokenizer("Hello sus man", return_tensors="pt"), tokenizer("Hi sus man", return_tensors="pt")]
-
-    # model_graph = draw_graph(model, input_data=inputs, save_graph=True, filename="graph.png")
     model = GPT2(config, gpt, verbose=True)
     true = gpt(inputs[1].input_ids).last_hidden_state
     res, cache = model(inputs, lambda x: 1, lambda x: False)
     assert (res.hidden_states == true).all()
     print("sanity check passed")
+
+def branching_check():
+    config, tokenizer, gpt = create_gpt2()
+    inputs = [tokenizer("Hello sus man", return_tensors="pt"), tokenizer("Hi sus man", return_tensors="pt")]
+    true = gpt(inputs[1].input_ids).last_hidden_state
+    model = GPT2(config, gpt, verbose=True)
 
     def which(path):
         if 'a1' in path: return 1
@@ -290,20 +294,18 @@ def main():
         elif path[-1] == 'f0': return True
         return False
     
-    # res = model(inputs, lambda x: 1, branch).hidden_states
-    # assert (res == true).all()
-    # print("sanity check passed2")
-
-    # time model call
     def run():
         res, cache = model(inputs, which, branch, store_cache=True)
         print(len(cache))
         for key in list(sorted(cache.keys(), key=lambda x: len(x))):
             print(key)
-            input()
         print(res.hidden_states - true)
     t = timeit.timeit(run, number=1)
     print(f"Time: {t:.5f} s")
+
+def main():
+    sanity_check()
+    branching_check()
 
 if __name__ == "__main__":
     main()
