@@ -240,9 +240,9 @@ class GPT2(nn.Module):
             self.cache = {}
         return result
 
-def create_gpt2(name="gpt2"):
-    config = GPT2Config.from_pretrained(name)
-    tokenizer = GPT2Tokenizer.from_pretrained(name)
+def create_gpt2(name="gpt2", revision="main"):
+    config = GPT2Config.from_pretrained(name, revision=revision)
+    tokenizer = GPT2Tokenizer.from_pretrained(name, revision=revision)
     gpt = GPT2Model.from_pretrained(name, config=config)
     return config, tokenizer, gpt
 
