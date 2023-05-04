@@ -88,16 +88,32 @@ class GPT2(nn.Module):
         # compute inputs (cache as much as possible!)
         results = []
         child_path = []
+
         if results_given is not None:
             results.append(results_given)
             child_path = results_given.path + [name]
         else:
+
+            # branching in attn layer (residual and attn are separate)
             if self.branch(path):
                 for head in range(num_heads):
-                    results.append(input_func(path + [name + str(head)]))
-                    child_path.extend(results[-1].path)
+                    head_name = name + str(head)
+
+                    # branching of qkv in attn head
+                    if self.branch(path + [head_name]):
+                        results.append({
+                            'q': input_func(path + [head_name, head_name + '.q']),
+                            'k': input_func(path + [head_name, head_name + '.k']),
+                            'v': input_func(path + [head_name, head_name + '.v'])
+                        })
+                        child_path.extend(results[-1]['q'].path + results[-1]['k'].path + results[-1]['v'].path)
+                    else:
+                        results.append(input_func(path + [head_name]))
+                        child_path.extend(results[-1].path)
+
                 child_path += [name]
             else:
+                # no branching in attn layer
                 result = input_func(path)
                 results = [result for _ in range(num_heads)]
                 child_path = result.path + [name]
@@ -112,9 +128,17 @@ class GPT2(nn.Module):
         q, k, v = [], [], []
         if self.branch(path) and results_given is None:
             for head in range(num_heads):
-                hidden_states = cur_block.ln_1(results[head].hidden_states)
+                head_name = name + str(head)
 
-                query, key, value = cur_block.attn.c_attn(hidden_states).split(cur_block.attn.split_size, dim=2)
+                query, key, value = None, None, None
+                if isinstance(results[head], ReturnValue):
+                    hidden_states = cur_block.ln_1(results[head].hidden_states)
+                    query, key, value = cur_block.attn.c_attn(hidden_states).split(cur_block.attn.split_size, dim=2)
+                else:
+                    query, _, _ = cur_block.attn.c_attn(cur_block.ln_1(results[head]['q'].hidden_states)).split(cur_block.attn.split_size, dim=2)
+                    _, key, _ = cur_block.attn.c_attn(cur_block.ln_1(results[head]['k'].hidden_states)).split(cur_block.attn.split_size, dim=2)
+                    _, _, value = cur_block.attn.c_attn(cur_block.ln_1(results[head]['v'].hidden_states)).split(cur_block.attn.split_size, dim=2)
+
                 query = cur_block.attn._split_heads(query, num_heads, head_dim)
                 key = cur_block.attn._split_heads(key, num_heads, head_dim)
                 value = cur_block.attn._split_heads(value, num_heads, head_dim)
@@ -251,11 +275,11 @@ def main():
     inputs = [tokenizer("Hello sus man", return_tensors="pt"), tokenizer("Hi sus man", return_tensors="pt")]
 
     # model_graph = draw_graph(model, input_data=inputs, save_graph=True, filename="graph.png")
-    model = GPT2(config, gpt, verbose=True)
+    model = GPT2(config, gpt, verbose=False)
     true = gpt(inputs[1].input_ids).last_hidden_state
-    # res = model(inputs, lambda x: 1, lambda x: False).hidden_states
-    # assert (res == true).all()
-    # print("sanity check passed")
+    res = model(inputs, lambda x: 1, lambda x: False).hidden_states
+    assert (res == true).all()
+    print("sanity check passed")
 
     def which(path):
         if 'a4.head0' in path: return 0
@@ -264,10 +288,12 @@ def main():
     def branch(path):
         if path[-1] == 'a4': return True
         if path[-1] == 'a4.head': return True
+        if path[-1] == 'a4.head0': return True
         return False
     
-    # res = model(inputs, lambda x: 1, branch).hidden_states
-    # assert (res == true).all()
+    res = model(inputs, lambda x: 1, branch).hidden_states
+    assert (res == true).all()
+    print("sanity check passed2")
 
     # time model call
     def run():
