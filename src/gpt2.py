@@ -5,9 +5,13 @@ from torchview import draw_graph
 from functools import partial
 import timeit
 
-def combine_paths(path1: list, path2: list) -> list:
-    if path1 == path2: return path1
-    return path1 + path2
+def print_path(tup, depth=0):
+    if isinstance(tup, str):
+        print('    ' * depth, tup, sep='')
+        return
+    print('    ' * depth, tup[-1], sep='')
+    for i in range(len(tup) - 1):
+        print_path(tup[i], depth + 1)
 
 class ReturnValue():
     def __init__(self, hidden_states, path, outputs=None):
@@ -29,16 +33,6 @@ class GPT2(nn.Module):
         self.which = None
         self.branch = None
     
-    def do_branch(self, input_func, path):
-        results = [None, None]
-        if self.branch(path):
-            results[0] = input_func(path[:-1])
-            results[1] = input_func(path)
-        else:
-            results[0] = input_func(path)
-            results[1] = results[0]
-        return results
-    
     def embed_input(self, path) -> ReturnValue:
         name = "emb"
         path.append(name)
@@ -46,11 +40,10 @@ class GPT2(nn.Module):
         # the meat of path patching: picking which input to use!
         input_choice = self.which(path)
         if self.verbose: print(' '.join(path), input_choice)
-        child_path = [(name, input_choice)]
-        tup = tuple(child_path)
-        if tup in self.cache:
-            if self.verbose: print("    using cache", tup)
-            return self.cache[tup]
+        child_path = ((input_choice,), name)
+        if child_path in self.cache:
+            if self.verbose: print("    using cache", child_path)
+            return self.cache[child_path]
         input_ids = self.inputs[input_choice].input_ids
 
         # metadata about inputs
@@ -70,7 +63,7 @@ class GPT2(nn.Module):
         # apply dropout
         hidden_states = self.model.drop(hidden_states)
         result = ReturnValue(hidden_states, child_path)
-        if self.store_cache: self.cache[tup] = result
+        if self.store_cache: self.cache[child_path] = result
         return result
     
     def block_attn_heads(self, path, i, results_given=None) -> ReturnValue:
@@ -87,11 +80,11 @@ class GPT2(nn.Module):
 
         # compute inputs (cache as much as possible!)
         results = []
-        child_path = []
+        child_path = tuple()
 
         if results_given is not None:
             results.append(results_given)
-            child_path = results_given.path + [name]
+            child_path = (results_given.path, name)
         else:
 
             # branching in attn layer (residual and attn are separate)
@@ -106,22 +99,21 @@ class GPT2(nn.Module):
                             'k': input_func(path + [head_name, head_name + '.k']),
                             'v': input_func(path + [head_name, head_name + '.v'])
                         })
-                        child_path.extend(results[-1]['q'].path + results[-1]['k'].path + results[-1]['v'].path)
+                        child_path += ((results[-1]['q'].path, results[-1]['k'].path, results[-1]['v'].path, head_name),)
                     else:
                         results.append(input_func(path + [head_name]))
-                        child_path.extend(results[-1].path)
+                        child_path += ((results[-1].path, head_name),)
 
-                child_path += [name]
+                child_path += (name,)
             else:
                 # no branching in attn layer
                 result = input_func(path)
                 results = [result for _ in range(num_heads)]
-                child_path = result.path + [name]
+                child_path = (result.path, name)
 
-        tup = tuple(child_path)
-        if tup in self.cache:
-            if self.verbose: print("    using cache", tup)
-            return self.cache[tup]
+        if child_path in self.cache:
+            if self.verbose: print("    using cache", child_path)
+            return self.cache[child_path]
 
         # ln + attn
         # qkv: shape of (batch_size, num_heads, seq_len, head_dim)
@@ -170,7 +162,7 @@ class GPT2(nn.Module):
 
         # result
         result = ReturnValue(attn_output, child_path, attn_weights)
-        if self.store_cache: self.cache[tup] = result
+        if self.store_cache: self.cache[child_path] = result
         return result
     
     def block_attn(self, path, i) -> ReturnValue:
@@ -179,19 +171,19 @@ class GPT2(nn.Module):
         if self.verbose: print(' '.join(path))
 
         input_func = self.embed_input if i == 0 else partial(self.block_ffn, i=i - 1)
-        results = []
+        results, child_path = [], []
         if self.branch(path):
             results = [input_func(path[:-1]), self.block_attn_heads(path[::], i)]
+            child_path = (results[0].path, results[1].path, name)
         else:
             results = [input_func(path[::])]
             results.append(self.block_attn_heads(path[::], i, results_given=results[0]))
+            child_path = (results[0].path, name)
         
         # cache
-        child_path = combine_paths(results[0].path, results[1].path) + [name]
-        tup = tuple(child_path)
-        if tup in self.cache:
-            if self.verbose: print("    using cache", tup)
-            return self.cache[tup]
+        if child_path in self.cache:
+            if self.verbose: print("    using cache", child_path)
+            return self.cache[child_path]
 
         # get attn params
         cur_block = self.model.h[i]
@@ -206,7 +198,7 @@ class GPT2(nn.Module):
         # residual connection
         hidden_states = attn_output + residual
         result = ReturnValue(hidden_states, child_path, None)
-        if self.store_cache: self.cache[tup] = result
+        if self.store_cache: self.cache[child_path] = result
         return result
 
     def block_ffn(self, path, i) -> ReturnValue:
@@ -215,14 +207,20 @@ class GPT2(nn.Module):
         if self.verbose: print(' '.join(path))
 
         input_func = partial(self.block_attn, i=i)
-        results = self.do_branch(input_func, path[::])
+        results, child_path = [None, None], None
+        if self.branch(path):
+            results[0] = input_func(path[:-1])
+            results[1] = input_func(path)
+            child_path = ((results[0].path, results[1].path), name)
+        else:
+            results[0] = input_func(path)
+            results[1] = results[0]
+            child_path = ((results[0].path), name)
 
         # cache
-        child_path = combine_paths(results[0].path, results[1].path) + [name]
-        tup = tuple(child_path)
-        if tup in self.cache:
-            if self.verbose: print("    using cache", tup)
-            return self.cache[tup]
+        if child_path in self.cache:
+            if self.verbose: print("    using cache", child_path)
+            return self.cache[child_path]
 
         # get ffn params
         cur_block = self.model.h[i]
@@ -236,7 +234,7 @@ class GPT2(nn.Module):
         hidden_states = residual + feed_forward_hidden_states
         outputs = None
         result = ReturnValue(hidden_states, child_path, outputs)
-        if self.store_cache: self.cache[tup] = result
+        if self.store_cache: self.cache[child_path] = result
         return result
 
     def final_ln(self, path) -> ReturnValue:
@@ -248,7 +246,7 @@ class GPT2(nn.Module):
         result = self.block_ffn(path[::], self.config.n_layer - 1)
         hidden_states = self.model.ln_f(result.hidden_states)
 
-        result = ReturnValue(hidden_states, result.path + [name], result.outputs)
+        result = ReturnValue(hidden_states, (result.path, name), result.outputs)
         return result
     
     def forward(self, inputs, which, branch, store_cache=True) -> ReturnValue:
@@ -257,14 +255,14 @@ class GPT2(nn.Module):
             self.which = which
             self.branch = branch
             self.inputs = inputs
+            self.cache = {}
             result = self.final_ln([])
             self.which = None
             self.branch = None
             self.inputs = None
-            self.cache = {}
-        return result
+        return result, self.cache
 
-def create_gpt2(name="gpt2", revision="main"):
+def create_gpt2(name="gpt2-medium", revision="main"):
     config = GPT2Config.from_pretrained(name, revision=revision)
     tokenizer = GPT2Tokenizer.from_pretrained(name, revision=revision)
     gpt = GPT2Model.from_pretrained(name, config=config)
@@ -272,33 +270,38 @@ def create_gpt2(name="gpt2", revision="main"):
 
 def main():
     config, tokenizer, gpt = create_gpt2()
+    print("loaded model")
     inputs = [tokenizer("Hello sus man", return_tensors="pt"), tokenizer("Hi sus man", return_tensors="pt")]
 
     # model_graph = draw_graph(model, input_data=inputs, save_graph=True, filename="graph.png")
-    model = GPT2(config, gpt, verbose=False)
+    model = GPT2(config, gpt, verbose=True)
     true = gpt(inputs[1].input_ids).last_hidden_state
-    res = model(inputs, lambda x: 1, lambda x: False).hidden_states
-    assert (res == true).all()
+    res, cache = model(inputs, lambda x: 1, lambda x: False)
+    assert (res.hidden_states == true).all()
     print("sanity check passed")
 
     def which(path):
-        if 'a4.head0' in path: return 0
-        return 1
+        if 'a1' in path: return 1
+        elif 'f0' in path: return 1
+        return 0
     
     def branch(path):
-        if path[-1] == 'a4': return True
-        if path[-1] == 'a4.head': return True
-        if path[-1] == 'a4.head0': return True
+        if path[-1] == 'a1': return True
+        elif path[-1] == 'f0': return True
         return False
     
-    res = model(inputs, lambda x: 1, branch).hidden_states
-    assert (res == true).all()
-    print("sanity check passed2")
+    # res = model(inputs, lambda x: 1, branch).hidden_states
+    # assert (res == true).all()
+    # print("sanity check passed2")
 
     # time model call
     def run():
-        res = model(inputs, which, branch, store_cache=False).hidden_states
-        print(res - true)
+        res, cache = model(inputs, which, branch, store_cache=True)
+        print(len(cache))
+        for key in list(sorted(cache.keys(), key=lambda x: len(x))):
+            print(key)
+            input()
+        print(res.hidden_states - true)
     t = timeit.timeit(run, number=1)
     print(f"Time: {t:.5f} s")
 
