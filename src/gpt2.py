@@ -4,23 +4,7 @@ import torch.nn as nn
 from torchview import draw_graph
 from functools import partial
 import timeit
-
-def print_path(tup, depth=0):
-    if isinstance(tup, str):
-        print('    ' * depth, tup, sep='')
-        return
-    print('    ' * depth, tup[-1], sep='')
-    for i in range(len(tup) - 1):
-        print_path(tup[i], depth + 1)
-
-class ReturnValue():
-    def __init__(self, hidden_states, path, outputs=None):
-        self.hidden_states = hidden_states
-        self.path = path[::]
-        self.outputs = outputs
-    
-    def __str__(self):
-        return f"ReturnValue(\n    h={self.hidden_states.shape},\n    p={self.path})"
+from utils import *
 
 class GPT2(nn.Module):
     def __init__(self, config, model: GPT2Model, verbose: bool = False):
@@ -44,7 +28,7 @@ class GPT2(nn.Module):
         if child_path in self.cache:
             if self.verbose: print("    using cache", child_path)
             return self.cache[child_path]
-        input_ids = self.inputs[input_choice].input_ids
+        input_ids = self.inputs[input_choice]['input_ids']
 
         # metadata about inputs
         input_shape = input_ids.size()
@@ -99,7 +83,10 @@ class GPT2(nn.Module):
                             'k': input_func(path + [head_name, head_name + '.k']),
                             'v': input_func(path + [head_name, head_name + '.v'])
                         })
-                        child_path += ((results[-1]['q'].path, results[-1]['k'].path, results[-1]['v'].path, head_name),)
+                        if results[-1]['q'] == results[-1]['k'] == results[-1]['v']:
+                            child_path += ((results[-1]['q'].path, head_name),)
+                        else:
+                            child_path += ((results[-1]['q'].path, results[-1]['k'].path, results[-1]['v'].path, head_name),)
                     else:
                         results.append(input_func(path + [head_name]))
                         child_path += ((results[-1].path, head_name),)
@@ -238,7 +225,7 @@ class GPT2(nn.Module):
         return result
 
     def final_ln(self, path) -> ReturnValue:
-        name = "final_ln"
+        name = "ln_final"
         path.append(name)
         if self.verbose: print(' '.join(path))
 
@@ -249,13 +236,14 @@ class GPT2(nn.Module):
         result = ReturnValue(hidden_states, (result.path, name), result.outputs)
         return result
     
-    def forward(self, inputs, which, branch, store_cache=True) -> ReturnValue:
+    def forward(self, inputs, which, branch, store_cache=True, clear_cache=True) -> ReturnValue:
         with torch.inference_mode():
             self.store_cache = store_cache
             self.which = which
             self.branch = branch
             self.inputs = inputs
-            self.cache = {}
+            if clear_cache:
+                self.cache = {}
             result = self.final_ln([])
             self.which = None
             self.branch = None
