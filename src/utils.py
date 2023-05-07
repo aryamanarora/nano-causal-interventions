@@ -8,18 +8,23 @@ def print_path(tup, depth=0):
     for i in range(len(tup) - 1):
         print_path(tup[i], depth + 1)
 
-sm = torch.nn.LogSoftmax(dim=2)
+lsm = torch.nn.LogSoftmax(dim=2)
+sm = torch.nn.Softmax(dim=2)
 
-def embed_to_distrib(model, embed):
+def format_token(tokenizer, tok):
+    return tokenizer.decode(tok).replace(" ", "_").replace("\n", "\\n")
+
+def embed_to_distrib(model, embed, log=False, logits=False):
     with torch.inference_mode():
         vocab = torch.matmul(embed, model.model.wte.weight.t())
-        return sm(vocab)
+        if logits: return vocab
+        return lsm(vocab) if log else sm(vocab)
 
 def top_vals(tokenizer, res, n=10):
     top_values, top_indices = torch.topk(res, n)
-    print(f"{'Index':<20} Value")
+    # print(f"{'Index':<20} Value")
     for i in range(len(top_values)):
-        tok = tokenizer.decode(top_indices[i].item()).replace(" ", "_").replace("\n", "\\n")
+        tok = format_token(tokenizer, top_indices[i].item())
         print(f"{tok:<20} {top_values[i].item()}")
 
 class ReturnValue():
