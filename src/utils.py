@@ -67,5 +67,5 @@ class ReturnValue():
             dot.node(str(n), str(n).split('||')[0])
         for e in edges:
             dot.edge(str(e[0]), str(e[1]))
-        dot.view(directory='graphs')
+        return dot
 

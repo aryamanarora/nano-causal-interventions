@@ -1,7 +1,61 @@
 # nano-path-patching
 
-Extremely simple implementation of [path patching](https://github.com/redwoodresearch/rust_circuit_public), for cases where the functionality of the whole library is not necessary. Written all in PyTorch.
+Simple utilities for conduction **path patching**[^name] experiments on transformer language models. Written all in PyTorch, wrapping existing model implementations from HuggingFace.
 
-Basic idea: we rewrite the `model.forward()` call to support picking between two inputs based on the path we are on in the computational graph (the core principle underlying the fully-fledged implementation of path patching). For example, you may call `GPT2.forward(inputs=[input1, input2], which=lambda path: 'attn4.5' in path)`, which will patch all inputs downstream of attention head 5 in layer 4.
+For a more general and powerful implementation of path patching on *any* neural network, use Redwood Research's [rust_circuit](https://github.com/redwoodresearch/rust_circuit_public). The goals of this library are too make path patching experiments really easy to run on specific models, so you don't have to write down a whole circuit from scratch repeatedly (as you may have to with rust_circuit).
 
 Currently under implementation.
+
+## How to use
+
+Basic idea: we rewrite the `model.forward()` call to support picking between multiple inputs based on the path we are on in the computational graph. We also offer utilities that allow splitting up computations within the graph dynamically, and maintain a cache so that complex path patching experiments aren't crazy slow.
+
+First, set up the model:
+```py
+from gpt2 import create_gpt2, GPT2
+
+config, tokenizer, gpt = create_gpt2(name="distilgpt2")
+model = GPT2(config, gpt, verbose=False) # set to True for logs, inspecting cache accesses
+```
+
+Now, define your inputs.
+
+```py
+inputs = [
+    tokenizer("The capital of Spain is", return_tensors="pt"),
+    tokenizer("The capital of Italy is", return_tensors="pt")
+]
+```
+
+Then, define two functions: `branch()` which tells the model when to branch apart computations and `which()`, which tells the model which input to select given a particular path in the computation graph.
+
+In this example, I'll define `branch()` to split apart computation at attention layer `a1`, so that the model computes the residual stream and the attention separately. Then, in `which()` I'll make the model pass our counterfactual input if the path goes through `a1`, and our normal input otherwise.
+
+```py
+def branch(path):
+    if path[-1] == "a1": return True
+    return False
+
+def which(path):
+    if "a1" in path: return 1
+    return 0
+```
+
+Finally, run the forward pass, passing these functions as args.
+
+```py
+res, cache = model(inputs, which, branch)
+```
+
+Final hidden states are stored in `res.hidden_states`.
+
+You can visualise the resulting computation graph!
+
+```py
+dot = res.visualise_path()
+dot.render('test.gv', view=True)
+```
+
+![](figs/distilgpt2.png)
+
+[^name]: Also called "causal scrubbing" 

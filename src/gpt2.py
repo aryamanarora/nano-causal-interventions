@@ -100,7 +100,7 @@ class GPT2(nn.Module):
                 # no branching in attn layer
                 result = input_func(deepcopy(path))
                 results = [result for _ in range(num_heads)]
-                child_path = ((result.path,), name)
+                child_path = Path((result.path,), name)
 
         child_path = Path(tuple(child_path.children), child_path.parent)
         if child_path in self.cache:
@@ -138,6 +138,8 @@ class GPT2(nn.Module):
         else:
             hidden_states = results[0].hidden_states
             if self.branch(path) == 'positions':
+                assert len(results) == self.input_len
+                assert hidden_states.shape[1] == self.input_len
                 for pos in range(self.input_len):
                     hidden_states[:, pos, :] = results[pos].hidden_states[:, pos, :]
             hidden_states = cur_block.ln_1(hidden_states)
@@ -317,22 +319,20 @@ def branching_check():
     model = GPT2(config, gpt, verbose=True)
 
     def which(path):
-        if 'a1' in path: return 1
-        elif 'f0' in path: return 1
+        if 'a11.head.pos1' in path: return 1
         return 0
     
     def branch(path):
-        if path[-1] == 'f0': return True
-        if path[-1] == 'f0.head': return 'positions'
+        if path[-1] == 'a11': return True
+        if path[-1] == 'a11.head': return 'positions'
         return False
     
     def run():
         res, cache = model(inputs, which, branch, store_cache=True)
-        print(res.visualise_path())
+        dot = res.visualise_path()
+        dot.render('test.gv', view=True)
         input()
         print(len(cache))
-        for key in list(sorted(cache.keys(), key=lambda x: len(x))):
-            print(key)
         print(res.hidden_states - true)
     t = timeit.timeit(run, number=1)
     print(f"Time: {t:.5f} s")
