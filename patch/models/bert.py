@@ -53,10 +53,10 @@ class BERT(nn.Module):
         return result
     
     def block_attn_heads(self, path, i, results_given=None) -> ReturnValue:
+        # path structure
         name = f"a{i}.head"
         path.append(name)
         if self.verbose: print(' '.join(path))
-
         input_func = self.embed_input if i == 0 else partial(self.block_ffn, i=i-1)
 
         # get attn params
@@ -64,7 +64,7 @@ class BERT(nn.Module):
         attn = cur_block.attention
         num_heads = attn.self.num_attention_heads
 
-        # compute inputs (cache as much as possible!)
+        # compute which inputs will be needed (cache as much as possible!)
         results = []
         child_path = tuple()
 
@@ -72,9 +72,9 @@ class BERT(nn.Module):
             results.append(results_given)
             child_path = (results_given.path, name)
         else:
-
             # branching in attn layer (residual and attn are separate)
             if self.branch(path):
+                # diff input for each head
                 for head in range(num_heads):
                     head_name = name + str(head)
 
@@ -89,14 +89,14 @@ class BERT(nn.Module):
                     else:
                         results.append(input_func(path + [head_name]))
                         child_path += ((results[-1].path, head_name),)
-
                 child_path += (name,)
+            # no branching in attn layer
             else:
-                # no branching in attn layer
                 result = input_func(path)
                 results = [result for _ in range(num_heads)]
                 child_path = (result.path, name)
-
+        
+        # access cache
         if child_path in self.cache:
             if self.verbose: print("    using cache", child_path)
             return self.cache[child_path]
