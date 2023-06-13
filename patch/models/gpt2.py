@@ -4,7 +4,7 @@ import torch.nn as nn
 from torchview import draw_graph
 from functools import partial
 import timeit
-from utils import *
+from patch.utils import *
 from copy import deepcopy
 
 class GPT2(nn.Module):

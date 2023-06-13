@@ -7,8 +7,8 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 
-import gpt2
-from utils import *
+import patch.models.gpt2
+from patch.utils import *
 from copy import deepcopy
 
 # load model and dataset
@@ -166,16 +166,16 @@ with torch.inference_mode():
                 d2 = distrib2[torch.arange(distrib2.size(0)), expected]
 
                 # get difference
-                diff = (d2 - saved[batch])
-                ct += d2.size(0)
-                metric += diff.sum().item()
+                # diff = (d2 - saved[batch])
+                # ct += d2.size(0)
+                # metric += diff.sum().item()
 
-                print(f"{start_toks[batch]:>20} {diff[0]:>10.5f}", end=": ")
-                top_vals(tokenizer, distrib2[0], n=1)
+                # print(f"{start_toks[batch]:>20} {diff[0]:>10.5f}", end=": ")
+                # top_vals(tokenizer, distrib2[0], n=1)
                 
                 # get KL divergence between distribs
-                # loss = kl(distrib1, distrib2)
-                # metric += loss.item() * 1e5
+                loss = kl(distrib1, distrib2)
+                metric += loss.item()
 
             res[(layer, head)] = metric / ct
             print(f"{layer:<5} {head:<5} {metric / ct:>20.5f}")

@@ -42,21 +42,22 @@ class ReturnValue():
         return f"ReturnValue(\n    h={self.hidden_states.shape},\n    p={self.path})"
     
     def _get_nodes(self, path, parent='final'):
-        edges = []
+        edges = set()
         if isinstance(path, str) or isinstance(path, int):
-            edges.append((parent, path))
+            edges.add((parent, path))
         elif isinstance(path[-1], str):
-            self.ct[path[-1]] += 1
-            child = f"{path[-1]}||{self.ct[path[-1]]}"
-            edges.append((parent, child))
+            if path not in self.ct[path[-1]]:
+                self.ct[path[-1]][path] = len(self.ct[path[-1]])
+            child = f"{path[-1]}||{self.ct[path[-1]][path]}"
+            edges.add((parent, child))
             for p in path[0]:
-                edges.extend(self._get_nodes(p, child))
+                edges.update(self._get_nodes(p, child))
         else:
-            edges.extend(self._get_nodes(path[-1], parent))
+            edges.update(self._get_nodes(path[-1], parent))
         return edges
     
     def get_nodes(self):
-        self.ct = defaultdict(int)
+        self.ct = defaultdict(lambda: defaultdict(int))
         return self._get_nodes(self.path)
     
     def visualise_path(self):
