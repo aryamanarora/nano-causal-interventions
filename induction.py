@@ -7,13 +7,13 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 
-import patch.models.gpt2
+from patch.models.gpt2 import create_gpt2, GPT2
 from patch.utils import *
 from copy import deepcopy
 
 # load model and dataset
-config, tokenizer, gpt = gpt2.create_gpt2(name="gpt2")
-model = gpt2.GPT2(config, gpt, verbose=False)
+config, tokenizer, gpt = create_gpt2(name="gpt2")
+model = GPT2(config, gpt, verbose=False)
 dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="validation")
 
 # tokenize dataset
