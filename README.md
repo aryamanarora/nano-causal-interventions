@@ -1,6 +1,6 @@
-# nano-path-patching
+# nano-causal-interventions
 
-Simple utilities for conduction **path patching**[^pp] (also known as **causal scrubbing**[^cs] and **interchange intervention**[^ii]) experiments on transformer language models. Written all in PyTorch, wrapping existing model implementations from HuggingFace.
+Simple utilities for conducting **causal interventions** (aka **path patching**[^pp], **causal scrubbing**[^cs], and non-learned **interchange intervention**[^ii]) experiments on transformer language models (currently only supports GPT-2). Written all in PyTorch, wrapping existing model implementations from HuggingFace.
 
 For a more general and powerful implementation of path patching on *any* neural network, use Redwood Research's [rust_circuit](https://github.com/redwoodresearch/rust_circuit_public). The goals of this library are too make path patching experiments really easy to run on specific models, so you don't have to write down a whole circuit from scratch repeatedly (as you may have to with rust_circuit).
 

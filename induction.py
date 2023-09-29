@@ -1,3 +1,5 @@
+# CODE IS DEPRECATED, WON'T WORK!
+
 import random
 from collections import defaultdict
 
